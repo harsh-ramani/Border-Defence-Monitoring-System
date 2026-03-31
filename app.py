@@ -1720,7 +1720,27 @@ def main():
         col1, col2 = st.columns([1, 3])
         with col1:
             st.markdown("**Camera Controls**")
-            run_camera = st.checkbox("▶️ Enable Camera Feed", value=False)
+            import tempfile
+            
+            source_type = st.radio("Select Video Source:", ["Local Webcam (Testing)", "Upload Video (Deployment)", "Video URL"])
+            
+            temp_file_path = None
+            video_url = None
+            run_camera = False
+            
+            if source_type == "Local Webcam (Testing)":
+                run_camera = st.checkbox("▶️ Enable Camera Feed", value=False)
+            elif source_type == "Upload Video (Deployment)":
+                uploaded_file = st.file_uploader("Upload mp4/avi footage", type=['mp4', 'avi'])
+                if uploaded_file is not None:
+                    tfile = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') 
+                    tfile.write(uploaded_file.read())
+                    temp_file_path = tfile.name
+                    run_camera = st.checkbox("▶️ Start Processing", value=False)
+            elif source_type == "Video URL":
+                video_url = st.text_input("Enter Video / IP Camera URL", value="")
+                if video_url:
+                    run_camera = st.checkbox("▶️ Connect to Stream", value=False)
             
             st.markdown("---")
             st.markdown("**Detection Filters**")
@@ -1737,16 +1757,26 @@ def main():
                 if net is None:
                     st.error("Model could not be loaded. Intrusion detection unavailable.")
                 else:
-                    cap = cv2.VideoCapture(0)
+                    # Select appropriate source for VideoCapture
+                    source = 0  # Default local webcam
+                    if source_type == "Upload Video (Deployment)" and temp_file_path:
+                        source = temp_file_path
+                    elif source_type == "Video URL" and video_url:
+                        source = video_url
+
+                    cap = cv2.VideoCapture(source)
                     if not cap.isOpened():
-                        st.error("Could not access the webcam. Ensure it's connected and not used by another app.")
+                        st.error("Could not access the video stream. If using a local webcam in the cloud, it will fail. Please upload a video file instead!")
                     else:
-                        st.success("Camera connected! Monitoring for intrusions...")
+                        st.success("Stream connected! Monitoring for intrusions...")
                         try:
                             while run_camera:
                                 ret, frame = cap.read()
                                 if not ret:
-                                    st.error("Failed to read frame from camera.")
+                                    if source_type == "Upload Video (Deployment)":
+                                        st.success("Video playback complete.")
+                                    else:
+                                        st.error("Failed to read frame or stream ended.")
                                     break
                                     
                                 (h, w) = frame.shape[:2]
