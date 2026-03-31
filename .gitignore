@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+.streamlit/credentials.toml
+mobilenet_iter_73000.caffemodel
+deploy.prototxt
