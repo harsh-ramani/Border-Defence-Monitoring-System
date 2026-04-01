@@ -1,4 +1,4 @@
-# 🛡️ GLOBAL BORDER THREAT AI
+# 🛡️ GLOBAL BORDER THREAT AI.
 ### Advanced Threat Prediction & Surveillance Intelligence Dashboard
 
 ![Version](https://img.shields.io/badge/version-v2.1.0-ff2d55?style=for-the-badge&logo=github)
