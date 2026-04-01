@@ -13,6 +13,9 @@ import warnings
 import cv2
 import urllib.request
 import os
+from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration, VideoProcessorBase
+from av import VideoFrame
+import av
 warnings.filterwarnings('ignore')
 
 # Page config
@@ -520,6 +523,62 @@ CLASSES = ["background", "aeroplane", "bicycle", "bird", "boat",
 HUMAN_CLASSES = ["person"]
 ANIMAL_CLASSES = ["bird", "cat", "cow", "dog", "horse", "sheep"]
 VEHICLE_CLASSES = ["aeroplane", "bicycle", "bus", "car", "motorbike", "train"]
+
+class VideoProcessor(VideoProcessorBase):
+    def __init__(self, detect_humans=True, detect_animals=True, detect_vehicles=True):
+        self.net = load_mobilenet_model()
+        self.detect_humans = detect_humans
+        self.detect_animals = detect_animals
+        self.detect_vehicles = detect_vehicles
+
+    def recv(self, frame):
+        img = frame.to_ndarray(format="bgr24")
+        
+        if self.net is not None:
+            (h, w) = img.shape[:2]
+            blob = cv2.dnn.blobFromImage(cv2.resize(img, (300, 300)), 0.007843, (300, 300), 127.5)
+            self.net.setInput(blob)
+            detections = self.net.forward()
+            
+            intrusion_detected = False
+            detected_labels = []
+            
+            for i in np.arange(0, detections.shape[2]):
+                confidence = detections[0, 0, i, 2]
+                if confidence > 0.4:
+                    idx = int(detections[0, 0, i, 1])
+                    class_name = CLASSES[idx]
+                    
+                    # Check if detection matches enabled filters
+                    is_human = class_name in HUMAN_CLASSES and self.detect_humans
+                    is_animal = class_name in ANIMAL_CLASSES and self.detect_animals
+                    is_vehicle = class_name in VEHICLE_CLASSES and self.detect_vehicles
+                    
+                    if is_human or is_animal or is_vehicle:
+                        intrusion_detected = True
+                        box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
+                        (startX, startY, endX, endY) = box.astype("int")
+                        
+                        # Set color based on type
+                        color = (0, 0, 255) if is_human else (0, 255, 0) if is_animal else (255, 0, 0)
+                        label_prefix = "🧑 HUMAN" if is_human else ("🐕 ANIMAL" if is_animal else "🚗 VEH")
+                        
+                        label = f"{label_prefix}: {confidence * 100:.1f}%"
+                        if label_prefix not in detected_labels:
+                            detected_labels.append(label_prefix)
+                            
+                        cv2.rectangle(img, (startX, startY), (endX, endY), color, 3)
+                        y = startY - 15 if startY - 15 > 15 else startY + 15
+                        cv2.putText(img, label, (startX, y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+            
+            # Add detection status to frame
+            if intrusion_detected:
+                status_text = f"INTRUSION: {', '.join(detected_labels)}"
+                cv2.putText(img, status_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+            else:
+                cv2.putText(img, "NO INTRUSION DETECTED", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        
+        return av.VideoFrame.from_ndarray(img, format="bgr24")
 
 @st.cache_data
 def generate_sample_data():
@@ -1752,7 +1811,25 @@ def main():
             alert_placeholder = st.empty()
             stframe = st.empty()
             
-            if run_camera:
+            if source_type == "Local Webcam (Testing)" and run_camera:
+                st.markdown("**Webcam Feed with AI Detection**")
+                RTC_CONFIGURATION = RTCConfiguration({
+                    "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
+                })
+                webrtc_ctx = webrtc_streamer(
+                    key="intrusion-detection",
+                    mode=WebRtcMode.SENDRECV,
+                    rtc_configuration=RTC_CONFIGURATION,
+                    video_processor_factory=lambda: VideoProcessor(detect_humans, detect_animals, detect_vehicles),
+                    media_stream_constraints={"video": True, "audio": False},
+                    async_processing=True,
+                )
+                if webrtc_ctx.video_processor:
+                    st.success("Webcam connected! AI detection is active.")
+                else:
+                    st.info("Waiting for webcam connection...")
+                    
+            elif run_camera:
                 net = load_mobilenet_model()
                 if net is None:
                     st.error("Model could not be loaded. Intrusion detection unavailable.")
@@ -1766,11 +1843,14 @@ def main():
 
                     cap = cv2.VideoCapture(source)
                     if not cap.isOpened():
-                        st.error("Could not access the video stream. If using a local webcam in the cloud, it will fail. Please upload a video file instead!")
+                        st.error("Could not access the video stream. Please check the URL or upload a valid video file.")
                     else:
                         st.success("Stream connected! Monitoring for intrusions...")
+                        # Process only first 100 frames to avoid infinite loop in Streamlit
+                        frame_count = 0
+                        max_frames = 100 if source_type == "Upload Video (Deployment)" else 50  # Limit for streams
                         try:
-                            while run_camera:
+                            while run_camera and frame_count < max_frames:
                                 ret, frame = cap.read()
                                 if not ret:
                                     if source_type == "Upload Video (Deployment)":
@@ -1823,10 +1903,12 @@ def main():
                                 # Convert to RGB for Streamlit
                                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                                 stframe.image(frame_rgb, channels="RGB", use_container_width=True)
+                                frame_count += 1
+                                time.sleep(0.1)  # Small delay to prevent overwhelming
                         finally:
                             cap.release()
             else:
-                st.info("Camera is currently off. Check 'Enable Camera Feed' to begin real-time detection.")
+                st.info("Camera is currently off. Select a video source and enable processing to begin real-time detection.")
 
     elif st.session_state.page == "settings":
         # SETTINGS TAB
